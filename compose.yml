@@ -1,0 +1,51 @@
+# Ember on the Pi. Everything listens on 127.0.0.1 only; Tailscale Serve adds HTTPS for the tailnet.
+# Settings come from .env next to this file: EMBER_URL and CALDAV_PASSWORD.
+
+x-quiet: &quiet  # all of Ember shares cores 2-3 at low priority, so the other services on the Pi come first
+  cpuset: "2,3"
+  cpu_shares: 512
+  restart: unless-stopped
+
+services:
+  ember:
+    <<: *quiet
+    build: .
+    image: ember
+    user: "1000:1000"
+    mem_limit: 300m
+    ports: ["127.0.0.1:8787:8787"]
+    volumes: ["./data/notes:/data/notes", "./server:/app/server:ro", "./web:/app/web:ro"]  # code mounted: update with rsync + restart
+    depends_on: [radicale, llm, whisper]
+    environment:
+      TZ: Europe/Rome
+      EMBER_HOST: 0.0.0.0
+      EMBER_NOTES: /data/notes
+      EMBER_LLM: http://llm:8080
+      EMBER_WHISPER: http://whisper:8081
+      EMBER_CALDAV: http://radicale:5232/ember/notes/
+      EMBER_CALDAV_LOGIN: ember:${CALDAV_PASSWORD}
+      EMBER_URL: ${EMBER_URL}
+
+  radicale:
+    <<: *quiet
+    image: ember
+    user: "1000:1000"
+    command: radicale --config /app/deploy/radicale.conf
+    mem_limit: 150m
+    ports: ["127.0.0.1:5232:5232"]
+    volumes: ["./data/calendar:/data/calendar", "./data/radicale.users:/data/radicale.users:ro"]
+
+  llm:
+    <<: *quiet
+    image: ghcr.io/ggml-org/llama.cpp:server-b11669
+    command: -m /models/Qwen3.5-0.8B-Q4_K_M.gguf --mmproj /models/mmproj-F16.gguf --jinja -c 4096 -np 1 -t 2 --host 0.0.0.0 --port 8080  # one note at a time
+    mem_limit: 1200m
+    volumes: ["./models:/models:ro"]
+
+  whisper:
+    <<: *quiet
+    build: { context: ., dockerfile: deploy/whisper.Dockerfile }
+    image: ember-whisper
+    command: -m /models/ggml-base.en.bin -t 2 --host 0.0.0.0 --port 8081
+    mem_limit: 400m
+    volumes: ["./models:/models:ro"]
