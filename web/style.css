@@ -36,7 +36,9 @@ button, label { padding: 12px 0; cursor: pointer; }
 
 header { display: flex; justify-content: space-between; align-items: baseline; padding-top: 18px; }
 .mark { font-size: 20px; letter-spacing: .02em; }
-.mark i { display: inline-block; width: 7px; height: 7px; margin-left: 3px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 9px 1px var(--ember); vertical-align: middle; }
+.mark i { display: inline-block; width: 7px; height: 7px; margin-left: 3px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 9px 1px var(--ember); vertical-align: middle; transition: background .6s, box-shadow .6s; }
+.mark i.busy { animation: glow 1.8s ease-in-out infinite; }  /* the Pi is tidying or answering */
+.mark i.off { background: var(--faint); box-shadow: none; }  /* offline */
 #status, #now, .faint, .label { color: var(--faint); }
 
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 26px; overflow-y: auto; }
@@ -46,7 +48,7 @@ textarea { flex: 1; width: 100%; padding: 8px 0; resize: none; caret-color: var(
 #attached { min-height: 1.6em; font-size: 14px; color: var(--rib); }
 .bar { display: flex; gap: 24px; border-top: 1px dashed var(--rule); }
 .send { margin-left: auto; color: var(--rib); font-weight: 700; }
-#remove { color: var(--faint); }
+#remove, #forget { color: var(--faint); }
 #remove.sure { color: var(--rib); }
 
 #search { width: 100%; padding: 4px 0; border-bottom: 1px solid var(--rule); border-radius: 0; -webkit-appearance: none; }
@@ -55,21 +57,23 @@ textarea { flex: 1; width: 100%; padding: 8px 0; resize: none; caret-color: var(
 .row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row span:last-child { flex: none; color: var(--faint); }
 .row span.due { color: var(--rib); }
-#look { width: 100%; margin-top: 28px; padding: 4px 0 16px; }
-#look #look-now { color: var(--rib); }
+.setting { width: 100%; padding: 4px 0; }
+.setting span:last-child { color: var(--rib); }
+#look { margin-top: 28px; }
+#sound { padding-bottom: 16px; }
 #view .due { display: block; text-indent: 0; font-size: 13px; color: var(--rib); }
 #view .done .due { color: var(--faint); }
 
 #view { flex: 1; }
 #view h1 { margin: 4px 0 14px; font-size: 22px; line-height: 1.3; }
-#view p { margin-bottom: 2px; }
-#view .bullet { padding-left: 2ch; text-indent: -2ch; }
-#view .bullet::before { content: "- "; color: var(--faint); }
+:is(#view, #chat) p { margin-bottom: 2px; }
+:is(#view, #chat) .bullet { padding-left: 2ch; text-indent: -2ch; }
+:is(#view, #chat) .bullet::before { content: "- "; color: var(--faint); }
 #view .task { padding-left: 4ch; text-indent: -4ch; }
 #view .task button { padding: 0; color: var(--rib); text-indent: 0; }
 #view .task.done { color: var(--faint); text-decoration: line-through; }
 #view .tags { margin-top: 18px; }
-#view a { color: var(--rib); }
+:is(#view, #chat) a { color: var(--rib); }
 #view img { display: block; max-width: 100%; margin: 10px 0; border-radius: 3px; filter: sepia(.15); }
 #view .player { display: flex; align-items: center; gap: 14px; margin: 12px 0; }
 #view .player button { min-width: 5ch; padding: 6px 0; color: var(--rib); font-weight: 700; text-align: left; }
@@ -81,8 +85,13 @@ textarea { flex: 1; width: 100%; padding: 8px 0; resize: none; caret-color: var(
 .track i { position: absolute; z-index: 1; top: 50%; left: var(--at, 0%); width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 9px 1px var(--ember); }
 .player.on .track i { animation: glow 1.8s ease-in-out infinite; }
 @keyframes glow { 50% { box-shadow: 0 0 16px 5px var(--ember); } }
-@media (prefers-reduced-motion: reduce) { .player.on .track i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .player.on .track i, .mark i.busy { animation: none; } }
 .player .time { min-width: 10ch; font-size: 14px; color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; }
+
+#chat { flex: 1; min-height: 0; overflow-y: auto; }
+#chat .q { margin-top: 18px; font-weight: 700; }
+#chat .from { margin-top: 4px; font-size: 13px; }
+#question { width: 100%; padding: 10px 0; caret-color: var(--rib); }
 
 footer { display: flex; justify-content: space-around; border-top: 1px dashed var(--rule); }
 footer a { padding: 12px 20px; color: var(--faint); }

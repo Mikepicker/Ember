@@ -4,12 +4,14 @@ import json
 import os
 import queue
 import re
+import secrets
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+import ask
 import pipeline
 import reminders
 
@@ -73,6 +75,13 @@ def attachment(url):
     return f"[voice]({url})" if Path(url).suffix.lower() in pipeline.AUDIO else f"![photo]({url})"
 
 
+def capture(nid, created, text, files):
+    """A new note waits in unsorted/ until it has been tidied and filed. A note sent twice is kept once."""
+    if nid not in paths:
+        write({"id": nid, "created": created, "status": "raw", "files": " ".join(files)}, text, NOTES / "unsorted" / f"{created[:10]} {nid}.md")
+        jobs.put((tidy, nid))
+
+
 def tidy(nid):
     note = read(paths[nid])
     urls = note.get("files", "").split()
@@ -93,13 +102,31 @@ def tidy(nid):
     remind(nid)
 
 
+def known_area(nid, text):
+    """The area where the people and projects a note mentions already live, if it's a single one.
+    A word counts as a name once any note wrote it as one, so "Henrik's site" and "kova" count too."""
+    words = lambda t: set(re.findall(r"[a-z]+", t.lower()))
+    others = [(p, p.read_text()) for other, p in list(paths.items())
+              if other != nid and p.exists() and not hidden(p) and p.parent != NOTES / "unsorted"]
+    known = set().union(*(pipeline.names(t) for _, t in others))
+    wanted = pipeline.names(text) | (words(text) & known)
+    areas = {p.relative_to(NOTES).parts[0] for p, t in others if wanted & words(t)}
+    return areas.pop() if len(areas) == 1 else None
+
+
 def place(nid):
     """Files a note under its area, and under area/topic once enough notes share that topic."""
     path = paths[nid]
     meta, body = parse(path.read_text())
-    if not re.sub(r"!?\[[^\]]*\]\([^)]*\)", "", body).strip():
-        return  # nothing to go on yet, e.g. an untranscribed recording
-    meta["folder"] = meta.get("folder") or pipeline.folder(meta.get("title", ""), body)
+    if not re.sub(r"!?\[[^\]]*\]\(/files/[^)]*\)", "", body).strip():
+        return  # only attachments and nothing to go on yet, e.g. an untranscribed recording
+    if not meta.get("folder"):
+        area, topic = pipeline.folder(meta.get("title", ""), body).split("/")
+        raw = (NOTES / meta["original"]).read_text() if meta.get("original") else ""
+        known = known_area(nid, f"{meta.get('title', '')}\n{body}\n{raw}")
+        if known and known != area:  # a note about Henrik goes where Henrik's notes are
+            area, topic = known, known if topic == area else topic
+        meta["folder"] = f"{area}/{topic}"
     area, topic = meta["folder"].split("/")
     peers = [p for p in (NOTES / area).glob("*.md") if p != path and parse(p.read_text())[0].get("folder") == meta["folder"]]
     dest = NOTES / area
@@ -215,11 +242,34 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply({"url": f"/files/{dest.relative_to(NOTES / '_files')}"})
         if self.path == "/api/notes":
             n = json.loads(self.payload())
-            if n["id"] not in paths:  # a resent note is ignored
-                meta = {"id": n["id"], "created": n["created"], "status": "raw", "files": " ".join(n.get("files", []))}
-                write(meta, n["text"], NOTES / "unsorted" / f"{n['created'][:10]} {n['id']}.md")
-                jobs.put((tidy, n["id"]))
+            capture(n["id"], n["created"], n["text"], n.get("files", []))
             return self.reply({"ok": True})
+        if self.path == "/api/quick":  # for iPhone Shortcuts: Siri, the Action Button, the share sheet
+            kind, data, nid = self.headers.get("Content-Type", "").split(";")[0], self.payload(), secrets.token_hex(4)
+            if kind.startswith("image/") and kind not in ("image/jpeg", "image/png"):
+                return self.send_error(415, "Send photos as JPEG or PNG (iPhone HEIC photos would be read only in part)")
+            files, text = [], ""
+            if kind.startswith("image/"):
+                dest = NOTES / "_files" / time.strftime("%Y/%m") / f"{nid}.{'jpg' if kind == 'image/jpeg' else 'png'}"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                files = [f"/files/{dest.relative_to(NOTES / '_files')}"]
+            else:
+                text = str(json.loads(data).get("text", "")) if kind == "application/json" else data.decode()
+            if not text.strip() and not files:
+                return self.send_error(400, "Nothing to save")
+            capture(nid, time.strftime("%Y-%m-%dT%H:%M"), text.strip(), files)
+            return self.reply({"ok": True})
+        if self.path == "/api/ask":  # the answer is sent as it's written, so it types itself out on the phone
+            chat = json.loads(self.payload())["chat"]
+            notes = [read(p) for p in list(paths.values()) if p.exists() and not hidden(p)]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            for piece in ask.answer(chat, notes):
+                self.wfile.write(piece.encode())
+                self.wfile.flush()
+            return
         self.send_error(404)
 
     def do_PUT(self):

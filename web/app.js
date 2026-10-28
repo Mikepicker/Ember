@@ -1,7 +1,7 @@
 // ember: write, read and sync notes. Works offline; the Pi does the tidying.
 const $ = id => document.getElementById(id);
-const state = { notes: {}, outbox: [], since: 0 };
-let pending = [], recorder = null, online = true, syncing = false, editing = false;
+const state = { notes: {}, outbox: [], since: 0, chat: [] };
+let pending = [], recorder = null, online = true, syncing = false, editing = false, asking = false, trouble = '';
 
 // storage: one IndexedDB store holding a few keys
 const db = new Promise((ok, fail) => {
@@ -35,6 +35,7 @@ async function send() {
   state.notes[id] = { id, created, body: text, status: 'raw', path: `unsorted/${id}.md` };
   pending = [];
   $('text').value = '';
+  sound(true);
   attached();
   store('draft', '');
   await persist();
@@ -121,6 +122,86 @@ function save(note, body) {
   state.outbox.push({ method: 'PUT', url: `/api/notes/${note.id}`, body: { body, base: note.mtime || 0, edited: stamp(new Date()) } });
   note.body = body;
   persist().then(sync);
+}
+
+// ask: the Pi answers from the notes as it writes; "[2]" in an answer is the note it came from
+async function ask() {
+  const q = $('question').value.trim();
+  if (!q || asking) return;
+  const turn = { q, a: '', ids: [] }, chat = state.chat.flatMap(t => [t.q, t.a]).concat(q);
+  $('question').value = '';
+  state.chat.push(turn);
+  asking = true;
+  trouble = '';
+  render();
+  try {
+    const r = await fetch('/api/ask', { method: 'POST', body: JSON.stringify({ chat }), headers: { 'Content-Type': 'application/json' } });
+    if (!r.ok) throw new Error(r.status);
+    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let text = '';
+    for (let part; !(part = await reader.read()).done; ) {
+      text += part.value;
+      const at = text.indexOf('\n');  // the first line lists the notes behind the numbers
+      if (at < 0) continue;
+      turn.ids = JSON.parse(text.slice(0, at));
+      turn.a = text.slice(at + 1);
+      if (turn.a) sound();
+      talk();
+    }
+    sound(true);
+  } catch {
+    if (!turn.a) {
+      state.chat.pop();
+      $('question').value = q;
+      trouble = "couldn't reach the Pi. ask again when you're back online.";
+    }
+  }
+  asking = false;
+  store('chat', state.chat);
+  render();
+}
+
+let said = '';
+function talk() {
+  const cite = t => md(t.a).replace(/\[(\d+)\]/g, (m, k) => (t.ids[k - 1] ? `<a href="#n/${t.ids[k - 1]}">${m}</a>` : m));
+  const from = t => [...new Set([...t.a.matchAll(/\[(\d+)\]/g)].map(m => t.ids[m[1] - 1]))].filter(id => state.notes[id]);
+  const html = state.chat.map(t => `<p class="q">› ${esc(t.q)}</p>` + (t.a
+    ? cite(t) + (from(t).length ? `<p class="from faint">from ${from(t).map(id => `<a href="#n/${id}">${esc(titleOf(state.notes[id]))}</a>`).join(', ')}</p>` : '')
+    : '<p class="faint">leafing through your notes…</p>')).join('') +
+    `<p class="faint">${trouble || (state.chat.length ? '' : "ask about anything you've written down.")}</p>`;
+  if (html !== said) {
+    $('chat').innerHTML = said = html;
+    $('chat').scrollTop = $('chat').scrollHeight;
+  }
+}
+
+// sound: soft key clicks while typing and a small bell on send, made on the spot; off unless switched on
+let audio = null;
+const loud = () => { try { return localStorage.getItem('sound') === 'on'; } catch { return false; } };
+function sound(bell) {
+  if (!loud()) return;
+  audio ||= new AudioContext();
+  audio.resume();
+  const t = audio.currentTime, gain = audio.createGain();
+  gain.connect(audio.destination);
+  if (bell) {
+    const o = audio.createOscillator();
+    o.frequency.value = 2400;
+    gain.gain.setValueAtTime(0.12, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    o.connect(gain);
+    o.start(t);
+    o.stop(t + 1.4);
+  } else {  // a key: a few milliseconds of fading noise, pitched a little differently each time
+    const b = audio.createBuffer(1, 500, audio.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length) ** 3;
+    const s = audio.createBufferSource();
+    s.buffer = b;
+    s.playbackRate.value = 0.6 + Math.random() * 0.5;
+    gain.gain.value = 0.25;
+    s.connect(gain);
+    s.start(t);
+  }
 }
 
 // voice player: play/pause, an ember playhead along a dashed track
@@ -234,14 +315,16 @@ function look(v) {
   dark.content = v === 'day' ? '#f3ead8' : '#1d1915';
 }
 
-// navigation: #write, #notes, #f/<folder>, #n/<id>
+// navigation: #write, #ask, #notes, #f/<folder>, #n/<id>
 function render() {
   const [view, arg] = location.hash.slice(1).split(/\/(.*)/);
-  const page = { notes: 'notes', f: 'notes', n: 'note' }[view] || 'write';
-  for (const id of ['write', 'notes', 'note']) $(id).hidden = id !== page;
-  $('tab-write').className = page === 'write' ? 'on' : '';
-  $('tab-notes').className = page === 'write' ? '' : 'on';
-  $('status').textContent = state.outbox.length ? `${state.outbox.length} waiting` : !online ? 'offline' : visible().some(n => n.status === 'raw') ? 'tidying…' : '';
+  const page = { ask: 'ask', notes: 'notes', f: 'notes', n: 'note' }[view] || 'write';
+  for (const id of ['write', 'ask', 'notes', 'note']) $(id).hidden = id !== page;
+  for (const tab of ['write', 'ask', 'notes']) $('tab-' + tab).className = (page === 'note' ? 'notes' : page) === tab ? 'on' : '';
+  const tidying = visible().some(n => n.status === 'raw');
+  $('status').textContent = state.outbox.length ? `${state.outbox.length} waiting` : !online ? 'offline' : tidying ? 'tidying…' : '';
+  $('dot').className = !online ? 'off' : asking || tidying ? 'busy' : '';  // the ember glows while the Pi works
+  if (page === 'ask') talk();
   if (page === 'notes') list(view === 'f' ? arg : '');
   if (page === 'note') show(arg);
 }
@@ -268,6 +351,22 @@ document.addEventListener('paste', e => {  // a pasted image becomes a photo; pa
 });
 $('search').oninput = () => render();
 $('look').onclick = () => look(LOOKS[(LOOKS.indexOf(document.documentElement.dataset.look) + 1) % LOOKS.length]);
+$('sound').onclick = () => {
+  try { localStorage.setItem('sound', loud() ? 'off' : 'on'); } catch {}
+  $('sound-now').textContent = loud() ? 'on' : 'off';
+  sound(true);
+};
+document.addEventListener('input', e => e.inputType && sound());  // typing, not picking a photo
+$('asking').onclick = ask;
+$('question').onkeydown = e => {
+  if (e.key === 'Enter') ask();
+};
+$('forget').onclick = () => {
+  state.chat = [];
+  trouble = '';
+  store('chat', []);
+  render();
+};
 document.addEventListener('click', e => {
   if (!$('write').hidden && !e.target.closest('button, label, a, input, textarea')) $('text').focus();
 });
@@ -313,6 +412,7 @@ $('view').onclick = e => {
   }
   $('text').value ||= (await load('draft')) || '';
   look(document.documentElement.dataset.look || 'auto');
+  $('sound-now').textContent = loud() ? 'on' : 'off';
   const tick = () => { const d = new Date(); $('now').textContent = `${day(d)} · ${clock(d)}`; };
   tick();
   setInterval(tick, 15000);
@@ -322,6 +422,7 @@ $('view').onclick = e => {
     document.querySelectorAll('audio').forEach(a => a.pause());
     render();
     if (!$('write').hidden) $('text').focus();
+    if (!$('ask').hidden) $('question').focus();
   });
   addEventListener('online', sync);
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && sync());

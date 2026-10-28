@@ -16,7 +16,7 @@
 <title>Ember</title>
 </head>
 <body>
-<header><b class="mark">ember<i></i></b><span id="status"></span></header>
+<header><b class="mark">ember<i id="dot"></i></b><span id="status"></span></header>
 
 <main id="write">
   <div id="now"></div>
@@ -32,7 +32,17 @@
 <main id="notes" hidden>
   <input id="search" type="search" placeholder="search…" autocomplete="off">
   <div id="list"></div>
-  <button id="look" class="row"><span>look</span><span id="look-now"></span></button>
+  <button id="look" class="row setting"><span>look</span><span id="look-now"></span></button>
+  <button id="sound" class="row setting"><span>sound</span><span id="sound-now"></span></button>
+</main>
+
+<main id="ask" hidden>
+  <div id="chat"></div>
+  <input id="question" placeholder="ask your notes…" enterkeyhint="send" autocomplete="off">
+  <nav class="bar">
+    <button id="forget">clear</button>
+    <button id="asking" class="send">ask ↵</button>
+  </nav>
 </main>
 
 <main id="note" hidden>
@@ -45,7 +55,7 @@
   </nav>
 </main>
 
-<footer><a id="tab-write" href="#write">write</a><a id="tab-notes" href="#notes">notes</a></footer>
+<footer><a id="tab-write" href="#write">write</a><a id="tab-ask" href="#ask">ask</a><a id="tab-notes" href="#notes">notes</a></footer>
 <script src="app.js"></script>
 </body>
 </html>

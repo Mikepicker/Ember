@@ -1,13 +1,16 @@
 """Turns a raw note into a tidy one: rules fix the typing, a small model lays it out."""
 import base64
+import html
 import json
 import os
 import re
 import subprocess
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 LLM = os.environ.get("EMBER_LLM", "http://127.0.0.1:8080")
+VISION = os.environ.get("EMBER_VISION", LLM)  # a smaller model reads photos better and faster than the text model
 WHISPER = os.environ.get("EMBER_WHISPER", "http://127.0.0.1:8081")
 AUDIO = {".webm", ".m4a", ".mp4", ".ogg", ".wav", ".mp3", ".aac"}
 LONGEST = 10 * 60  # seconds; longer recordings are kept but not transcribed
@@ -56,6 +59,20 @@ AREAS = ["work", "home", "money", "health", "family", "friends", "travel", "food
 FOLDER_PROMPT = """You file personal notes. Pick the area of life the note belongs to,
 and name its topic with one lowercase plural noun, the label you would write on a drawer."""
 
+AREA_HINTS = """Areas:
+- work: the job and the company: clients, colleagues, products, projects, orders, deliveries, invoices
+- home: the house and what is in it: repairs, appliances, cleaning, garden
+- money: personal finances: bills, bank, mortgage, savings, insurance, taxes
+- health: body and mind: doctors, appointments, exercise, sleep
+- family: parents, children, partner, relatives
+- friends: friends and social life
+- travel: trips and getting around: flights, trains, hotels, documents
+- food: recipes, cooking, restaurants
+- shopping: things to buy and gifts
+- learning: books, courses, talks, studying
+- hobbies: music, games, crafts, sport for fun
+- ideas: ideas and plans with no date"""
+
 FOLDER_SCHEMA = {
     "type": "object",
     "properties": {"area": {"enum": AREAS}, "topic": {"type": "string", "pattern": "^[a-z]{3,15}$"}},
@@ -72,14 +89,16 @@ def expand(match):
 
 def correct(text):
     text = re.sub(r"\S+", expand, text)
-    return re.sub(r"(^|[.!?]\s+|\n\s*)([a-z])", lambda m: m[1] + m[2].upper(), text.strip())
+    # "remind me to call Henrik" is the task "call Henrik"; left in, small models sometimes turn it around
+    text = re.sub(r"(?i)(^|[.!?]\s+|\n\s*)(remind me to|don't forget to)\s+", r"\1", text.strip())
+    return re.sub(r"(^|[.!?]\s+|\n\s*)([a-z])", lambda m: m[1] + m[2].upper(), text)
 
 
-def ask(messages, schema=None):
+def ask(messages, schema=None, server=None):
     request = {"messages": messages, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
     if schema:
         request["response_format"] = {"type": "json_schema", "json_schema": {"schema": schema}}
-    req = urllib.request.Request(f"{LLM}/v1/chat/completions", json.dumps(request).encode(), {"Content-Type": "application/json"})
+    req = urllib.request.Request(f"{server or LLM}/v1/chat/completions", json.dumps(request).encode(), {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=300) as r:
         answer = json.load(r)["choices"][0]["message"]["content"]
     return json.loads(answer) if schema else answer.strip()
@@ -107,10 +126,11 @@ def transcribe(path):
 
 
 def read(path):
-    jpeg = ffmpeg(path, "-vf", "scale='min(1280,iw)':-2", "-f", "image2", "-c:v", "mjpeg")
+    # 896 px wide is about 1,000 image tokens: as accurate as 1280 px on receipts, whiteboards and printed pages, 2-4x faster
+    jpeg = ffmpeg(path, "-vf", "scale='min(896,iw)':-2", "-f", "image2", "-c:v", "mjpeg")
     image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}
     ask_for = "Write out all the text in this photo exactly, line by line. If there is no text, describe the photo in one short sentence."
-    return ask([{"role": "user", "content": [image, {"type": "text", "text": ask_for}]}])
+    return ask([{"role": "user", "content": [image, {"type": "text", "text": ask_for}]}], server=VISION)
 
 
 def layout(text):
@@ -127,24 +147,51 @@ FOLDER_EXAMPLES = [
 ]
 
 
-def folder(title, body):
+def folder(title, body, hints=True):
     """Picks "area/topic" for a note: the area from a fixed set, the topic named freely."""
-    messages = [{"role": "system", "content": FOLDER_PROMPT}]
+    messages = [{"role": "system", "content": FOLDER_PROMPT + ("\n" + AREA_HINTS if hints else "")}]
     for note, answer in FOLDER_EXAMPLES:
         messages += [{"role": "user", "content": note}, {"role": "assistant", "content": json.dumps(answer)}]
     out = ask(messages + [{"role": "user", "content": f"{title}\n{body}"}], FOLDER_SCHEMA)
     return f"{out['area']}/{out['topic']}"
 
 
+NAME = re.compile(r"\b[A-Za-z]*[A-Z][A-Za-z]*[A-Z][A-Za-z]*\b|(?<=[a-z,] )[A-Z][a-z]+\b")  # NovaX, DeltaWorks; Henrik mid-sentence
+NOT_NAMES = {*"monday tuesday wednesday thursday friday saturday sunday january february march april may june july".split(),
+             *"august september october november december eur usd am pm ok asap todo".split()}
+
+
+def names(text):
+    """People, places and projects a note mentions, lowercased."""
+    return {w.lower() for w in NAME.findall(text)} - NOT_NAMES
+
+
 def faithful(src, title, body):
     """Names and numbers may move into the title; the body alone must stay about as long as the original."""
     letters = lambda s: len(re.sub(r"[^a-z]", "", s.lower()))
-    names = re.findall(r"(?<=[a-z,] )[A-Z][a-z]+|\b[A-Za-z]*[A-Z][A-Za-z]*[A-Z][A-Za-z]*\b", src)  # Henrik; NovaX, DeltaWorks
-    kept = all(w in f"{title}\n{body}" for w in re.findall(r"\d+", src) + names)
+    kept = all(w in f"{title}\n{body}" for w in re.findall(r"\d+", src) + NAME.findall(src))
     return kept and 0.6 < letters(body) / max(letters(src), 1) < 1.5
 
 
+def link(url):
+    """A shared web page becomes a note with its title, a link and its own description. No model touches the URL."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (ember)"}), timeout=15) as r:
+            page = r.read(3_000_000).decode(r.headers.get_content_charset() or "utf-8", "replace")  # YouTube names its videos 0.8 MB in
+    except Exception:
+        page = ""
+    find = lambda pattern: " ".join(html.unescape(m[1]).split()) if (m := re.search(pattern, page, re.I | re.S)) else ""
+    meta = lambda name: find(rf'<meta[^>]+(?:name|property)="(?:og:)?{name}"[^>]+content="([^"]*)"')
+    parts = urllib.parse.urlsplit(url)
+    words = " ".join(re.findall(r"[A-Za-z0-9]+", parts.path))  # some sites refuse to be read: name the note after the address
+    title = (meta("title") or find(r"<title[^>]*>(.*?)</title>") or f"{parts.netloc.removeprefix('www.')}: {words}".rstrip(": "))[:100]
+    about = meta("description")
+    return {"title": title, "body": f"[{re.sub(r'[][]', '', title)}]({url})\n\n{about}".strip(), "tags": ["link"]}
+
+
 def tidy(raw):
+    if re.fullmatch(r"https?://\S+", raw.strip()):
+        return link(raw.strip())
     text = correct(raw)
     head, _, rest = text.partition("\n")
     heading = head.endswith(":") and len(head.split()) <= 6 and rest.strip()  # "NovaX:" on its own line names the note
