@@ -92,13 +92,15 @@ def tidy(nid):
     for f in recordings:
         pipeline.remux(f)
     heard = "\n\n".join(pipeline.transcribe(f) for f in recordings)
-    seen = "\n\n".join(pipeline.read(f) for f in files if f.suffix.lower() not in pipeline.AUDIO)  # kept exactly as read
+    looked = [pipeline.read(f) for f in files if f.suffix.lower() not in pipeline.AUDIO]
+    seen = "\n\n".join(text for text, _ in looked)  # kept exactly as read
     created, raw = note["created"], "\n\n".join(t for t in (note["body"], heard) if t)
     original = f"_raw/{created[:7].replace('-', '/')}/{nid}.md"
     write({"id": f"{nid}.raw", "created": created, "title": "original"}, f"{raw}\n\n{seen}", NOTES / original)
     out = pipeline.tidy(raw) if raw else {**pipeline.layout(seen[:600]), "body": ""}  # a photo alone is named from what it shows
     body = "\n\n".join(t for t in (out["body"], seen, "\n".join(attachment(url) for url in urls)) if t)
-    meta = {"id": nid, "created": created, "title": out["title"], "tags": ", ".join(out["tags"]), "original": original}
+    tags = dict.fromkeys([*out["tags"], *(kind for _, kind in looked if kind)])  # "dog" for a photo of a Labrador
+    meta = {"id": nid, "created": created, "title": out["title"], "tags": ", ".join(tags), "original": original}
     write(meta, body, filename("unsorted", created, out["title"], nid))
     place(nid)
     remind(nid)

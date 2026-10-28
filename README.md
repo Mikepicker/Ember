@@ -92,6 +92,7 @@ Measured 28 Oct 2026, areas right out of 80 (with area descriptions and the name
 
 Photos: Qwen3.5-0.8B at 896 px read a receipt, a whiteboard and an invoice completely, in 31-59 s on the Pi; Qwen3.5-2B took 154 s for the receipt and missed figures on the invoice. Xiaomi-OCR-0 did worst with this prompt. Gemma 4 E2B read every word but listed prices apart from their items, and took 53-98 s.
 A photo is first asked what it shows, in a sentence, and whether it has any words; only then is its text copied out, cut off at 1,000 tokens. Asked to copy out a photo with no words, the 0.8B makes text up, on and on: a dog photo ran for 5 minutes. A photo sent on its own is named from that sentence.
+A photo with no words also gets the plain word for what it shows as a tag: the 2B won't take "a yellow Labrador" as an answer to "what did I write about the dog?", even after writing that a Labrador is a dog. The word is a third field in the same answer, named `subject_in_one_plain_everyday_word`; asked as a second question, it cost another minute on the Pi, where the photo is read again each time.
 A note that fails to be tidied is tried again every 5 minutes.
 Filing by embedding similarity (bge-small) was tried and dropped: a note's nearest neighbour was in the right area only half the time.
 
