@@ -278,7 +278,7 @@ const section = (label, rows) => rows.length ? `<div class="label">${label}</div
 function list(folder) {
   const notes = visible(), words = $('search').value.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length) {
-    const found = notes.filter(n => words.every(w => `${n.title} ${n.tags} ${n.body}`.toLowerCase().includes(w)));
+    const found = notes.filter(n => words.every(w => `${n.title} ${n.tags} ${n.folder || ''} ${n.body}`.toLowerCase().includes(w)));
     return $('list').innerHTML = section('found', found.map(row)) || '<div class="label">nothing found</div>';
   }
   if (folder) {

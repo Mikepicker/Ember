@@ -86,7 +86,9 @@ Measured 28 Oct 2026, areas right out of 80 (with area descriptions and the name
 | Gemma 4 E4B | 63 | 77 | 182 s, 6.0 GB (too big to run beside the other services) |
 | LFM2.5-1.2B | 55 | 73 | 14.6 s (its prompt can't be cached) |
 | MiniCPM5-1B | 54 | 63 | 5.6 s |
+| K2-Horizon-0.9B (Q8_0) | 52 | 70 | 9.4 s, 2.3 GB |
 | Qwen3.5-0.8B | 50 | 75 | 6.5 s |
+| Spark-X2.5-1.7B | 47 | 73 | 10.4 s, 2.5 GB |
 
 Photos: Qwen3.5-0.8B at 896 px read a receipt, a whiteboard and an invoice completely, in 31-59 s on the Pi; Qwen3.5-2B took 154 s for the receipt and missed figures on the invoice. Xiaomi-OCR-0 did worst with this prompt. Gemma 4 E2B read every word but listed prices apart from their items, and took 53-98 s.
 A photo is first asked what it shows, in a sentence, and whether it has any words; only then is its text copied out, cut off at 1,000 tokens. Asked to copy out a photo with no words, the 0.8B makes text up, on and on: a dog photo ran for 5 minutes. A photo sent on its own is named from that sentence.

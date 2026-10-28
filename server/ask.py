@@ -23,8 +23,8 @@ their them then there these they this to up us was we were what when where which
 
 
 def words(text):
-    """The first five letters are enough to match meeting with meetings, and remind with reminder."""
-    return {w[:5] for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 1 and w not in COMMON}
+    """The first five letters are enough to match meeting with meetings, and remind with reminder; shorter words drop a plural s."""
+    return {w[:5] if len(w) > 5 else w.removesuffix("s") for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 1 and w not in COMMON}
 
 
 DIARY = words("today tonight tomorrow week weekend monday tuesday wednesday thursday friday saturday sunday "
@@ -39,7 +39,8 @@ def entry(n, number):
     lines = re.sub(r"!?\[[^\]]*\]\(/files/[^)]*\)", "", body).split("\n")  # attachments mean nothing to the model
     for line, at, _, timed in n.get("due", []):  # "on Friday at 10" is spelled out too, so questions about dates work
         lines[line] += f" (due {datetime.fromisoformat(at):{'%A %d %B %H:%M' if timed else '%A %d %B'}})"
-    return f"[{number}] {n['created'][:10]}, {n['path'].rsplit('/', 1)[0]}: {n.get('title', '')}\n" + "\n".join(lines).strip()[:1200]
+    tags = f" ({n['tags']})" if n.get("tags") else ""  # folder and tags say what a note is about when its words don't: a dog photo is in home/pets
+    return f"[{number}] {n['created'][:10]}, {n.get('folder') or n['path'].rsplit('/', 1)[0]}: {n.get('title', '')}{tags}\n" + "\n".join(lines).strip()[:1200]
 
 
 def pick(question, notes):
