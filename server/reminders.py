@@ -71,8 +71,11 @@ def when(text, now):
         day = now.date() if time >= (now.hour, now.minute) else now.date() + timedelta(days=1)
     if day and re.search(r"\b(before|by)\b", t) and not time:
         day -= timedelta(days=1)
-    hour, minute = time or (9, 0)
-    return datetime(day.year, day.month, day.day, hour, minute), bool(time)
+    at = datetime(day.year, day.month, day.day, *(time or (9, 0)))
+    if not time and at < now:  # "today" written after 9: an hour or two later, on the hour, but never in the night
+        at = (now + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
+        at = at.replace(hour=9) if at.date() > now.date() else at
+    return at, bool(time)
 
 
 def key(task):
@@ -81,6 +84,15 @@ def key(task):
 
 def tasks(body):
     return re.findall(r"(?m)^\s*- \[[ x]\] (.+)$", body)
+
+
+def promote(old, new):
+    """Only new notes meet the model, which is what turns "finish the roadmap at 10" into a task.
+    So a line typed in later that names a day or time becomes a task too; one whose box was taken off by hand stays as it is."""
+    text = lambda line: re.sub(r"^\s*(- )?(\[[ x]\] )?", "", line)
+    before = {text(line) for line in old.split("\n")}
+    new_task = lambda m: m[2] not in before and "://" not in m[2] and when(m[2], datetime.now())
+    return re.sub(r"(?m)^([ \t]*)(?:- (?!\[[ x]\] ))?(\w.*)$", lambda m: f"{m[1]}- [ ] {m[2]}" if new_task(m) else m[0], new)
 
 
 def anchor(old, new, anchors, edited):

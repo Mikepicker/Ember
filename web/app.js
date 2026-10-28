@@ -43,8 +43,17 @@ async function send() {
   sync();
 }
 
-function attached() {
-  $('attached').textContent = pending.map(f => '+ ' + (f.blob.type.startsWith('image') ? 'photo' : 'voice')).join(' ');
+function attached() {  // what goes with the next note: photos as thumbnails, a recording as "voice"; tap one to drop it
+  $('attached').replaceChildren(...pending.map(f => {
+    const b = document.createElement('button');
+    if (f.blob.type.startsWith('image')) {
+      const img = b.appendChild(new Image());
+      img.onload = () => URL.revokeObjectURL(img.src);
+      img.src = URL.createObjectURL(f.blob);
+    } else b.textContent = 'voice';
+    b.onclick = () => { pending = pending.filter(p => p !== f); attached(); };
+    return b;
+  }));
 }
 
 async function voice() {
@@ -337,8 +346,8 @@ $('text').oninput = () => store('draft', $('text').value);
 $('text').onkeydown = e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
 };
-$('photo').onchange = e => {
-  for (const f of e.target.files) pending.push({ name: `${Date.now()}-${f.name.replace(/[^\w.]/g, '')}`, blob: f });
+$('photo').onchange = e => {  // photos picked together can share a name, like "image.jpg"
+  [...e.target.files].forEach((f, i) => pending.push({ name: `${Date.now()}-${i}-${f.name.replace(/[^\w.]/g, '')}`, blob: f }));
   e.target.value = '';
   attached();
 };

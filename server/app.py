@@ -94,7 +94,7 @@ def tidy(nid):
     created, raw = note["created"], "\n\n".join(t for t in (note["body"], heard) if t)
     original = f"_raw/{created[:7].replace('-', '/')}/{nid}.md"
     write({"id": f"{nid}.raw", "created": created, "title": "original"}, f"{raw}\n\n{seen}", NOTES / original)
-    out = pipeline.tidy(raw) if raw else {"title": seen.split("\n")[0][:60] or "untitled", "body": "", "tags": []}
+    out = pipeline.tidy(raw) if raw else {**pipeline.layout(seen[:600]), "body": ""}  # a photo alone is named from what it shows
     body = "\n\n".join(t for t in (out["body"], seen, "\n".join(attachment(url) for url in urls)) if t)
     meta = {"id": nid, "created": created, "title": out["title"], "tags": ", ".join(out["tags"]), "original": original}
     write(meta, body, filename("unsorted", created, out["title"], nid))
@@ -278,11 +278,12 @@ class Handler(SimpleHTTPRequestHandler):
         if not path:
             return self.reply({"ok": False})  # deleted meanwhile: drop the edit rather than retry it forever
         meta, old = parse(path.read_text())
-        meta["anchors"] = reminders.anchor(old, n["body"], meta.get("anchors", ""), n.get("edited"))
+        body = reminders.promote(old, n["body"])
+        meta["anchors"] = reminders.anchor(old, body, meta.get("anchors", ""), n.get("edited"))
         if path.stat().st_mtime > n["base"] + 0.001:  # changed since the phone last saw it: keep both
             meta = {**meta, "id": f"{nid}-{int(time.time())}", "title": f"{meta.get('title', '')} (conflict)"}
             path = path.with_stem(f"{path.stem} (conflict)")
-        write(meta, n["body"], path)
+        write(meta, body, path)
         jobs.put((remind, meta["id"]))
         self.reply({"ok": True})
 

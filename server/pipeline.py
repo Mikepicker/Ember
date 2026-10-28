@@ -61,7 +61,7 @@ and name its topic with one lowercase plural noun, the label you would write on 
 
 AREA_HINTS = """Areas:
 - work: the job and the company: clients, colleagues, products, projects, orders, deliveries, invoices
-- home: the house and what is in it: repairs, appliances, cleaning, garden
+- home: the house and what is in it: repairs, appliances, cleaning, garden, pets
 - money: personal finances: bills, bank, mortgage, savings, insurance, taxes
 - health: body and mind: doctors, appointments, exercise, sleep
 - family: parents, children, partner, relatives
@@ -129,8 +129,10 @@ def read(path):
     # 896 px wide is about 1,000 image tokens: as accurate as 1280 px on receipts, whiteboards and printed pages, 2-4x faster
     jpeg = ffmpeg(path, "-vf", "scale='min(896,iw)':-2", "-f", "image2", "-c:v", "mjpeg")
     image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}
-    ask_for = "Write out all the text in this photo exactly, line by line. If there is no text, describe the photo in one short sentence."
-    return ask([{"role": "user", "content": [image, {"type": "text", "text": ask_for}]}], server=VISION)
+    look = lambda question: ask([{"role": "user", "content": [image, {"type": "text", "text": question}]}], server=VISION)
+    text = look("Write out all the text in this photo exactly, line by line. If there is no text, describe the photo in one short sentence.")
+    # with no text, the 0.8B says so and then describes little or nothing; asked on its own, it says what the photo shows
+    return look("What is in this photo? Answer in one short sentence.") if re.match(r"(?i)(there is )?no (visible |readable )?text", text) else text
 
 
 def layout(text):

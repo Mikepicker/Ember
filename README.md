@@ -79,13 +79,17 @@ Measured 28 Oct 2026, areas right out of 80 (with area descriptions and the name
 
 | Model | Areas right | Clean-ups kept | Pi |
 |---|---|---|---|
-| Qwen3.5-2B | 73 | 77 | 12.5 s |
+| Phi-4 Mini (3.8B) | 74 | 75 | 21.0 s, 5.2 GB |
+| Qwen3.5-2B | 73 | 77 | 12.5 s, 2.9 GB |
+| Gemma 4 E2B | 71 | 75 | 19.0 s, 4.6 GB |
 | MiniCPM5-2B | 66 | 71 | 12.8 s |
+| Gemma 4 E4B | 63 | 77 | 182 s, 6.0 GB (too big to run beside the other services) |
 | LFM2.5-1.2B | 55 | 73 | 14.6 s (its prompt can't be cached) |
 | MiniCPM5-1B | 54 | 63 | 5.6 s |
 | Qwen3.5-0.8B | 50 | 75 | 6.5 s |
 
-Photos: Qwen3.5-0.8B at 896 px read a receipt, a whiteboard and an invoice completely, in 31-59 s on the Pi; Qwen3.5-2B took 154 s for the receipt and missed figures on the invoice. Xiaomi-OCR-0 did worst with this prompt.
+Photos: Qwen3.5-0.8B at 896 px read a receipt, a whiteboard and an invoice completely, in 31-59 s on the Pi; Qwen3.5-2B took 154 s for the receipt and missed figures on the invoice. Xiaomi-OCR-0 did worst with this prompt. Gemma 4 E2B read every word but listed prices apart from their items, and took 53-98 s.
+A photo with no text is asked a second question, what it shows, because the 0.8B answers "no text is visible" and little else; a photo sent on its own is named from that answer. About a minute on the Pi.
 Filing by embedding similarity (bge-small) was tried and dropped: a note's nearest neighbour was in the right area only half the time.
 
 Asking: the 2B reads only about 24 tokens a second on the Pi, so a question goes with the few notes that share its rarer words (or the five with the nearest dates), never all of them. First words come after 4-12 s, whole answers in 7-19 s.
