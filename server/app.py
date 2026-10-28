@@ -84,6 +84,8 @@ def capture(nid, created, text, files):
 
 def tidy(nid):
     note = read(paths[nid])
+    if note.get("status") != "raw":  # tidied already: the sweep can queue a note twice
+        return
     urls = note.get("files", "").split()
     files = [NOTES / "_files" / url.removeprefix("/files/") for url in urls]
     recordings = [f for f in files if f.suffix.lower() in pipeline.AUDIO]
@@ -161,11 +163,11 @@ def check(nid):
 
 
 def sweep(_):
-    """Every few minutes: pick up what was ticked on the phone, and retry anything that failed to sync."""
+    """Every few minutes: pick up what was ticked on the phone, and retry anything that failed to sync or to be tidied."""
     reminders.setup()
     for nid, path in list(paths.items()):
         if path.exists() and not hidden(path):  # a note deleted by hand is skipped
-            check(nid)
+            jobs.put((tidy, nid)) if parse(path.read_text())[0].get("status") == "raw" else check(nid)
 
 
 def every(seconds, job):

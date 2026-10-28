@@ -94,13 +94,19 @@ def correct(text):
     return re.sub(r"(^|[.!?]\s+|\n\s*)([a-z])", lambda m: m[1] + m[2].upper(), text)
 
 
-def ask(messages, schema=None, server=None):
+def ask(messages, schema=None, server=None, limit=None):
+    """Raises ValueError if the answer runs past `limit` tokens."""
     request = {"messages": messages, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    if limit:
+        request["max_tokens"] = limit
     if schema:
         request["response_format"] = {"type": "json_schema", "json_schema": {"schema": schema}}
     req = urllib.request.Request(f"{server or LLM}/v1/chat/completions", json.dumps(request).encode(), {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=300) as r:
-        answer = json.load(r)["choices"][0]["message"]["content"]
+        choice = json.load(r)["choices"][0]
+    if choice["finish_reason"] == "length":
+        raise ValueError("answer cut off")
+    answer = choice["message"]["content"]
     return json.loads(answer) if schema else answer.strip()
 
 
@@ -125,14 +131,20 @@ def transcribe(path):
         return " ".join(re.sub(r"\[[A-Z_ ]+\]", "", json.load(r)["text"]).split())  # drops markers like [BLANK_AUDIO]
 
 
+LOOK = {"type": "object", "properties": {"shows": {"type": "string"}, "text": {"type": "boolean"}}, "required": ["shows", "text"]}
+
+
 def read(path):
     # 896 px wide is about 1,000 image tokens: as accurate as 1280 px on receipts, whiteboards and printed pages, 2-4x faster
     jpeg = ffmpeg(path, "-vf", "scale='min(896,iw)':-2", "-f", "image2", "-c:v", "mjpeg")
     image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}
-    look = lambda question: ask([{"role": "user", "content": [image, {"type": "text", "text": question}]}], server=VISION)
-    text = look("Write out all the text in this photo exactly, line by line. If there is no text, describe the photo in one short sentence.")
-    # with no text, the 0.8B says so and then describes little or nothing; asked on its own, it says what the photo shows
-    return look("What is in this photo? Answer in one short sentence.") if re.match(r"(?i)(there is )?no (visible |readable )?text", text) else text
+    look = lambda question, **kw: ask([{"role": "user", "content": [image, {"type": "text", "text": question}]}], server=VISION, **kw)
+    # asked to copy out a photo with no words in it, the 0.8B makes some up, on and on; so it's asked first whether there are any
+    seen = look("Say what this photo shows in one short sentence, and whether it has any written or printed words in it.", schema=LOOK)
+    try:
+        return f"{seen['shows']}\n\n{look('Write out all the text in this photo exactly, line by line.', limit=1000)}" if seen["text"] else seen["shows"]
+    except ValueError:  # cut off: it was making text up, or there's more than it can copy
+        return seen["shows"]
 
 
 def layout(text):
