@@ -15,7 +15,7 @@ services:
     mem_limit: 300m
     ports: ["127.0.0.1:8787:8787"]
     volumes: ["./data/notes:/data/notes", "./server:/app/server:ro", "./web:/app/web:ro"]  # code mounted: update with rsync + restart
-    depends_on: [radicale, llm, vision, whisper]
+    depends_on: [radicale, llm, vision, whisper, embed, tts]
     environment:
       TZ: Europe/Rome
       EMBER_HOST: 0.0.0.0
@@ -23,6 +23,8 @@ services:
       EMBER_LLM: http://llm:8080
       EMBER_VISION: http://vision:8080
       EMBER_WHISPER: http://whisper:8081
+      EMBER_EMBED: http://embed:8080
+      EMBER_TTS: http://tts:5000
       EMBER_CALDAV: http://radicale:5232/ember/notes/
       EMBER_CALDAV_LOGIN: ember:${CALDAV_PASSWORD}
       EMBER_URL: ${EMBER_URL}
@@ -48,6 +50,21 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-b11669
     command: -m /models/Qwen3.5-0.8B-Q4_K_M.gguf --mmproj /models/mmproj-F16.gguf --jinja -c 4096 -np 1 -t 2 --host 0.0.0.0 --port 8080
     mem_limit: 1200m
+    volumes: ["./models:/models:ro"]
+
+  embed:  # what notes and stories mean: EmbeddingGemma-300M put the right note first for 30 of 32 eval questions
+    <<: *quiet
+    image: ghcr.io/ggml-org/llama.cpp:server-b11669
+    command: -m /models/embeddinggemma-300M-Q8_0.gguf --embedding -c 2048 -b 2048 -ub 2048 -np 1 -t 2 --host 0.0.0.0 --port 8080
+    mem_limit: 600m
+    volumes: ["./models:/models:ro"]
+
+  tts:  # reads notes aloud
+    <<: *quiet
+    build: { context: ., dockerfile: deploy/piper.Dockerfile }
+    image: ember-piper
+    command: -m /models/piper/en_US-lessac-medium.onnx --host 0.0.0.0 --port 5000
+    mem_limit: 400m
     volumes: ["./models:/models:ro"]
 
   whisper:

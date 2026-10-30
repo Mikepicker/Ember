@@ -45,17 +45,23 @@
   </nav>
 </main>
 
+<main id="read" hidden>
+  <div class="label"><span id="pull"></span><a href="#n/feeds">feeds</a></div>
+  <div id="news"></div>
+</main>
+
 <main id="note" hidden>
   <article id="view"></article>
   <textarea id="edit" hidden></textarea>
   <nav class="bar">
     <button id="back">‹ back</button>
     <button id="remove">delete</button>
+    <button id="moving">move</button>
     <button id="editing" class="send">edit</button>
   </nav>
 </main>
 
-<footer><a id="tab-write" href="#write">write</a><a id="tab-ask" href="#ask">ask</a><a id="tab-notes" href="#notes">notes</a></footer>
-<script src="app.js"></script>
+<footer><a id="tab-write" href="#write">write</a><a id="tab-ask" href="#ask">ask</a><a id="tab-notes" href="#notes">notes</a><a id="tab-read" href="#read">read</a></footer>
+<script type="module" src="app.js"></script>
 </body>
 </html>

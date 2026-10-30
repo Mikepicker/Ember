@@ -1,135 +1,27 @@
-"""Mirrors dated tasks into a CalDAV server, which the iPhone's Reminders and Calendar apps read."""
+"""Dated tasks mirrored into a CalDAV server, which the iPhone's Reminders and Calendar apps read: meetings as events,
+everything else as reminders. Each is a file named after its note and its task, "<note id>-<task key>.ics"."""
 import base64
-import hashlib
 import os
 import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-CALDAV = os.environ.get("EMBER_CALDAV", "")  # a calendar collection, e.g. http://127.0.0.1:5232/ember/notes/
+import tasks
+
+CALDAV = os.environ.get("EMBER_CALDAV", "")  # a calendar collection, e.g. http://127.0.0.1:5232/ember/notes/; empty: off
 LOGIN = os.environ.get("EMBER_CALDAV_LOGIN", "")  # user:password
 URL = os.environ.get("EMBER_URL", "http://127.0.0.1:8787")
-
-DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-PARTS = {"morning": 9, "noon": 12, "afternoon": 14, "evening": 19, "tonight": 20}
-MONTH = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
-MEETING = re.compile(r"\b(meet|meeting|appointment|interview|dinner|lunch)\b", re.I)
-
-
-def date_in(t, now):
-    if re.search(r"\b(today|tonight)\b", t):
-        return now.date()
-    if "tomorrow" in t:
-        return now.date() + timedelta(days=1)
-    if m := re.search(r"\bin (\d+|a|one|two|three) (day|week)s?\b", t):
-        n = {"a": 1, "one": 1, "two": 2, "three": 3}.get(m[1]) or int(m[1])
-        return now.date() + timedelta(days=n * (7 if m[2] == "week" else 1))
-    if m := re.search(r"\b(" + "|".join(DAYS) + r"|weekend)\b", t):
-        weekday = 5 if m[1] == "weekend" else DAYS.index(m[1])
-        return now.date() + timedelta(days=(weekday - now.weekday()) % 7 or 7)
-    if m := re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*-\s*\d{{1,2}})? {MONTH}\b|\b{MONTH} (\d{{1,2}})\b", t):  # "12-16 dec" means the 12th
-        day, month = (int(m[1]), m[2]) if m[1] else (int(m[4]), m[3])
-        return upcoming(now, MONTHS.index(month) + 1, day)
-    if m := re.search(r"\b(\d{1,2})/(\d{1,2})\b", t):  # day/month
-        return upcoming(now, int(m[2]), int(m[1]))
-    if m := re.search(r"\b(january|february|march|april|june|july|august|september|october|november|december)\b", t):
-        return upcoming(now, MONTHS.index(m[1][:3]) + 1, 1)
-
-
-def upcoming(now, month, day):
-    try:
-        d = now.date().replace(month=month, day=day)
-        return d if d >= now.date() else d.replace(year=d.year + 1)
-    except ValueError:
-        return None
-
-
-def time_in(t):
-    if m := re.search(r"\b(\d{1,2}):(\d{2})\s*(am|pm)?\b", t):
-        hour, minute, half = int(m[1]), int(m[2]), m[3]
-    elif m := re.search(r"\b(\d{1,2})\s*(am|pm)\b", t):
-        hour, minute, half = int(m[1]), 0, m[2]
-    elif m := re.search(r"\bat (\d{1,2})\b", t):
-        hour, minute, half = int(m[1]), 0, "pm" if int(m[1]) < 7 else None  # "at 4" means the afternoon
-    elif m := re.search(r"\b(" + "|".join(PARTS) + r")\b", t):
-        return PARTS[m[1]], 0
-    else:
-        return None
-    hour = hour % 12 + 12 if half == "pm" else hour % 12 if half == "am" else hour
-    return (hour, minute) if hour < 24 and minute < 60 else None
-
-
-def when(text, now):
-    """The moment a task mentions, as (datetime, has a time), or None. Words like "friday" count from `now`."""
-    t = text.lower().replace("a.m.", "am").replace("p.m.", "pm")
-    day, time = date_in(t, now), time_in(t)
-    if not day and (not time or not re.search(r"\d", t)):  # "in the morning" alone isn't a reminder; "at 4" is
-        return None
-    if not day:
-        day = now.date() if time >= (now.hour, now.minute) else now.date() + timedelta(days=1)
-    if day and re.search(r"\b(before|by)\b", t) and not time:
-        day -= timedelta(days=1)
-    at = datetime(day.year, day.month, day.day, *(time or (9, 0)))
-    if not time and at < now:  # "today" written after 9: an hour or two later, on the hour, but never in the night
-        at = (now + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
-        at = at.replace(hour=9) if at.date() > now.date() else at
-    return at, bool(time)
-
-
-def key(task):
-    return hashlib.sha1(task.strip().encode()).hexdigest()[:6]
-
-
-def tasks(body):
-    return re.findall(r"(?m)^\s*- \[[ x]\] (.+)$", body)
-
-
-def promote(old, new):
-    """Only new notes meet the model, which is what turns "finish the roadmap at 10" into a task.
-    So a line typed in later that names a day or time becomes a task too; one whose box was taken off by hand stays as it is."""
-    text = lambda line: re.sub(r"^\s*(- )?(\[[ x]\] )?", "", line)
-    before = {text(line) for line in old.split("\n")}
-    new_task = lambda m: m[2] not in before and "://" not in m[2] and when(m[2], datetime.now())
-    return re.sub(r"(?m)^([ \t]*)(?:- (?!\[[ x]\] ))?(\w.*)$", lambda m: f"{m[1]}- [ ] {m[2]}" if new_task(m) else m[0], new)
-
-
-def anchor(old, new, anchors, edited):
-    """Tasks added or reworded in an edit count words like "tomorrow" from `edited`; the others keep their anchor.
-    Anchors are stored as "key@time key@time"; a task without one counts from when the note was written."""
-    kept, before, out = dict(a.split("@") for a in anchors.split()), {key(t) for t in tasks(old)}, {}
-    for k in map(key, tasks(new)):
-        if k in kept:
-            out[k] = kept[k]
-        elif k not in before and edited:
-            out[k] = edited
-    return " ".join(f"{k}@{v}" for k, v in out.items())
-
-
-def dated(body, created, anchors=""):
-    """The note's tasks that mention a date or time: (line number, text, done, moment, has a time)."""
-    kept, found = dict(a.split("@") for a in anchors.split()), []
-    for i, line in enumerate(body.split("\n")):
-        m = re.match(r"\s*- \[([ x])\] (.+)", line)
-        if m and (at := when(m[2], datetime.fromisoformat(kept.get(key(m[2]), created)))):
-            found.append((i, m[2], m[1] == "x", *at))
-    return found
-
-
-def component(text):
-    """Meetings go to Calendar as events; everything else to Reminders."""
-    return "VEVENT" if MEETING.search(text) else "VTODO"
 
 
 def utc(d):
     return d.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def item(uid, note, text, done, at, timed):
+def ics(uid, note, text, done, at, timed):
     esc = lambda s: re.sub(r"([\\;,])", r"\\\1", s).replace("\n", "\\n")
     alarm = lambda trigger: ["BEGIN:VALARM", "ACTION:DISPLAY", f"DESCRIPTION:{esc(text)}", trigger, "END:VALARM"]
-    kind = component(text)
+    kind = tasks.kind(text)
     lines = [
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ember//EN", f"BEGIN:{kind}",
         f"UID:{uid}", f"DTSTAMP:{utc(datetime.fromisoformat(note['created']))}", f"SUMMARY:{esc(text)}",
@@ -166,20 +58,16 @@ def setup():
             '<C:comp name="VTODO"/><C:comp name="VEVENT"/></C:supported-calendar-component-set></D:prop></D:set></C:mkcalendar>')
 
 
-def push(note, body):
-    """Writes the note's dated tasks to the calendar and removes ones that are gone. Returns how many there are."""
-    found = dated(body, note["created"], note.get("anchors", "")) if CALDAV else []
-    for n, (_, text, done, at, timed) in enumerate(found):
-        dav("PUT", f"{note['id']}-{n}.ics", item(f"{note['id']}-{n}", note, text, done, at, timed))
-    for n in range(len(found), int(note.get("reminders") or 0)):
-        dav("DELETE", f"{note['id']}-{n}.ics")
-    return len(found)
+def push(note, dated, gone):
+    """Writes the note's dated tasks to the calendar, and removes those of the tasks in `gone`, by key."""
+    for _, text, done, at, timed in dated:
+        uid = f"{note['id']}-{tasks.key(text)}"
+        dav("PUT", f"{uid}.ics", ics(uid, note, text, done, at, timed))
+    for k in gone:
+        dav("DELETE", f"{note['id']}-{k}.ics")
 
 
-def ticked(note):
-    """For each of the note's reminders (events have no ticks): whether it is ticked off in the Reminders app."""
-    out = {}
-    for n in range(int(note.get("reminders") or 0) if CALDAV else 0):
-        if "BEGIN:VTODO" in (text := dav("GET", f"{note['id']}-{n}.ics") or ""):
-            out[n] = "STATUS:COMPLETED" in text
-    return out
+def ticked(nid, keys):
+    """For each of the note's reminders still there: whether it's ticked off in the Reminders app. Events have no ticks."""
+    there = {k: dav("GET", f"{nid}-{k}.ics") or "" for k in keys}
+    return {k: "STATUS:COMPLETED" in text for k, text in there.items() if "BEGIN:VTODO" in text}

@@ -8,6 +8,8 @@
         "EMBER_LLM=http://127.0.0.1:8091",
         "EMBER_VISION=http://127.0.0.1:8100",
         "EMBER_WHISPER=http://127.0.0.1:8092",
+        "EMBER_EMBED=http://127.0.0.1:8095",
+        "EMBER_TTS=http://127.0.0.1:8098",
         "EMBER_CALDAV=http://127.0.0.1:5232/ember/notes/",
         "EMBER_CALDAV_LOGIN=ember:dev",
         "python3", "server/app.py"
